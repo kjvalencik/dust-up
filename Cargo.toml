@@ -1,0 +1,16 @@
+[package]
+name = "dust-up"
+version = "0.1.0"
+authors = ["Ken Valencik <kvalencik@underarmour.com>"]
+
+[dependencies]
+futures = "0.1"
+hyper = "0.11"
+hyperlocal = "0.4"
+hyper-openssl = "0.4"
+openssl = "0.10"
+serde = "1"
+serde_json = "1"
+serde_yaml = "0.7"
+tar = "0.4"
+tokio-core = "0.1"
