@@ -35,14 +35,13 @@ impl Docker {
 		Docker { core, transport }
 	}
 
-	pub fn info(&mut self) -> Result<(), hyper::Error> {
+	pub fn info(&mut self) -> Result<Value, hyper::Error> {
 		let uri = self.transport.uri("/info").unwrap();
 		let work = self.transport.get(uri).and_then(|res| {
 			res.body().concat2().and_then(move |body| {
 				let v: Value = serde_json::from_slice(&body).unwrap();
 
-				println!("{:?}", v["Architecture"]);
-				Ok(())
+				Ok(v)
 			})
 		});
 
