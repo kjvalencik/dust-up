@@ -19,54 +19,18 @@ use futures::{Future, Stream};
 
 use tokio_core::reactor::Core;
 
-use docker::{tokio_stdin, Docker};
-use terminal::RawTerminal;
+use self::docker::Docker;
+use self::lib::stdio::stdin_body;
+use self::lib::terminal::RawTerminal;
 
+#[macro_use]
+mod lib;
 mod docker;
 
 const NAME: &str = env!("CARGO_PKG_NAME");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 const AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
-
-mod terminal {
-	use std::io;
-	use std::os::unix::io::AsRawFd;
-
-	use termios::{self, cfmakeraw, tcsetattr, Termios};
-
-	struct PrevTerminal {
-		fd: i32,
-		prev_ios: Termios,
-	}
-
-	impl Drop for PrevTerminal {
-		fn drop(&mut self) {
-			tcsetattr(self.fd, termios::TCSADRAIN, &self.prev_ios)
-				.expect("failed to restore term");
-		}
-	}
-
-	pub struct RawTerminal {
-		_prev_ios: PrevTerminal,
-	}
-
-	impl RawTerminal {
-		pub fn new() -> RawTerminal {
-			let stdin = io::stdin();
-			let fd = stdin.as_raw_fd();
-			let mut ios = Termios::from_fd(fd).expect("valid stdin handle");
-			let prev_ios = PrevTerminal { fd, prev_ios: ios };
-
-			cfmakeraw(&mut ios);
-			tcsetattr(fd, termios::TCSADRAIN, &ios).expect("set attr on ios");
-
-			RawTerminal {
-				_prev_ios: prev_ios,
-			}
-		}
-	}
-}
 
 fn main() {
 	let matches = App::new(NAME)
@@ -113,10 +77,8 @@ fn main() {
 			.value_of("CONTAINER")
 			.expect("CONTAINER is required.");
 
-		// TODO: Use the `stdin` from here to create the tokio so this
-		// isn't unused.
 		let _term = RawTerminal::new();
-		let body = tokio_stdin::stdin_body(&core);
+		let body = stdin_body(&core);
 
 		let work = docker.attach(container_id, body).and_then(|res| {
 			let (width, height) = term_size::dimensions().unwrap();

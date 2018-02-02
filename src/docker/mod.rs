@@ -15,81 +15,8 @@ mod transport;
 type DockerResponse<T> = Box<Future<Item = T, Error = hyper::Error>>;
 
 // TODO: Consider `impl trait` instead of boxes
-
-// FIXME: Use percent encoding on all ID values
 pub struct Docker {
 	transport: Transport,
-}
-
-pub mod tokio_stdin {
-	use std;
-	use std::io::{self, Read};
-	use std::thread;
-
-	use hyper::{self, Body, Chunk};
-
-	use futures::stream::iter_result;
-	use futures::{Future, Sink, Stream};
-	use futures::sync::mpsc::{unbounded, SendError, UnboundedReceiver};
-
-	use tokio_core::reactor::Core;
-
-	#[derive(Debug)]
-	enum Error {
-		Stdin(std::io::Error),
-		Channel(SendError<u8>),
-	}
-
-	/// Spawn a new thread that reads from stdin and passes messages back using an unbounded channel.
-	pub fn spawn_stdin_stream_unbounded() -> UnboundedReceiver<u8> {
-		let (channel_sink, channel_stream) = unbounded();
-		let stdin_sink = channel_sink.sink_map_err(Error::Channel);
-
-		thread::spawn(move || {
-			let stdin = io::stdin();
-			let stdin_lock = stdin.lock();
-
-			// Push a couple of empty bytes onto the stream that will be
-			// dropped by body encoder
-			let bytes = b"\0\0"
-				.into_iter()
-				.map(|byte| Ok(*byte))
-				.chain(stdin_lock.bytes());
-
-			iter_result(bytes)
-				.map_err(Error::Stdin)
-				.forward(stdin_sink)
-				.wait()
-				.unwrap();
-		});
-
-		channel_stream
-	}
-
-	pub fn stdin_body(core: &Core) -> Body {
-		let stdin = spawn_stdin_stream_unbounded()
-			.map(|byte| Ok(Chunk::from(vec![byte])))
-			.map_err(|_| unreachable!());
-
-		let (tx, body) = hyper::Body::pair();
-
-		core.handle()
-			.spawn(tx.send_all(stdin).map(|_| ()).map_err(|_| ()));
-
-		body
-	}
-}
-
-// TODO: Move this outside
-macro_rules! path_format {
-	($fmt: expr $(, $arg: expr)+,) => (path_format!($fmt $(, $arg)+));
-	($fmt: expr $(, $arg: expr)+) => (format!(
-		$fmt
-		$(, ::url::percent_encoding::percent_encode(
-			$arg.as_bytes(),
-			::url::percent_encoding::DEFAULT_ENCODE_SET,
-		))+
-	))
 }
 
 impl Docker {
@@ -134,11 +61,7 @@ impl Docker {
 
 	// TODO: Inspect container state before attempting to attach
 	// TODO: Listen for SIGWINCH with `chan_signal`
-	pub fn attach<'a>(
-		&'a self,
-		id: &'a str,
-		body: Body,
-	) -> Box<Future<Item = Response, Error = hyper::Error> + 'a> {
+	pub fn attach(&self, id: &str, body: Body) -> DockerResponse<Response> {
 		// TODO: Take query params as arguments
 		let uri = self.transport
 			.uri(&path_format!(
@@ -154,7 +77,7 @@ impl Docker {
 		req.set_body(body);
 
 		let attach = self.transport.request(req);
-		let work = self.ensure_running(id).and_then(|_| attach);
+		let work = self.ensure_running(id).then(|_| attach);
 
 		Box::new(work)
 	}
