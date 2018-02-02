@@ -12,10 +12,13 @@ use self::transport::Transport;
 
 mod transport;
 
+type DockerResponse<T> = Box<Future<Item = T, Error = hyper::Error>>;
+
+// TODO: Consider `impl trait` instead of boxes
+
 // FIXME: Use percent encoding on all ID values
-pub struct Docker<'a> {
+pub struct Docker {
 	transport: Transport,
-	core: &'a mut Core,
 }
 
 pub mod tokio_stdin {
@@ -77,30 +80,32 @@ pub mod tokio_stdin {
 	}
 }
 
-impl<'a> Docker<'a> {
-	fn ensure_running(&mut self, id: &str) -> Result<(), hyper::Error> {
-		let res_value = self.inspect(id)?;
-
-		// Need to get the type definitions for deserialization, this is
-		// terrible.
-		if let Value::Object(res) = res_value {
-			if let Some(state_value) = res.get("State") {
-				if let Value::Object(ref state) = *state_value {
-					if let Some(status_value) = state.get("Status") {
-						if let Value::String(ref status) = *status_value {
-							if status == "running" {
-								return Ok(());
+impl Docker {
+	fn ensure_running(&self, id: &str) -> DockerResponse<()> {
+		let work = self.inspect(id).and_then(|res_value| {
+			// Need to get the type definitions for deserialization, this is
+			// terrible.
+			if let Value::Object(res) = res_value {
+				if let Some(state_value) = res.get("State") {
+					if let Value::Object(ref state) = *state_value {
+						if let Some(status_value) = state.get("Status") {
+							if let Value::String(ref status) = *status_value {
+								if status == "running" {
+									return Ok(());
+								}
 							}
 						}
 					}
 				}
 			}
-		}
 
-		Err(hyper::Error::Status)
+			Err(hyper::Error::Status)
+		});
+
+		Box::new(work)
 	}
 
-	pub fn new(core: &'a mut Core) -> Docker<'a> {
+	pub fn new(core: &Core) -> Docker {
 		let host = env::var("DOCKER_HOST")
 			.unwrap_or_else(|_| "unix:///var/run/docker.sock".into());
 
@@ -112,86 +117,78 @@ impl<'a> Docker<'a> {
 			Transport::new_tcp(core, &host)
 		};
 
-		Docker { core, transport }
+		Docker { transport }
 	}
 
 	// TODO: Inspect container state before attempting to attach
 	// TODO: Listen for SIGWINCH with `chan_signal`
-	pub fn attach<F, T, I>(
-		&mut self,
-		id: &str,
+	pub fn attach<'a>(
+		&'a self,
+		id: &'a str,
 		body: Body,
-		cb: F,
-	) -> Result<I, hyper::Error>
-	where
-		F: Fn(Response) -> T,
-		T: Future<Item = I, Error = hyper::Error>,
-	{
-		// FIXME: Losing the error message
-		if let Err(err) = self.ensure_running(id) {
-			return Err(err);
-		}
+	) -> Box<Future<Item = Response, Error = hyper::Error> + 'a> {
+		let work = self.ensure_running(id).and_then(move |_| {
+			// TODO: Take query params as arguments
+			let uri = self.transport
+				.uri(&format!(
+					"/containers/{}/attach?stream=1&stdin=1&stdout=1&stderr=1",
+					id
+				))
+				.unwrap();
 
-		// TODO: Take query params as arguments
-		let uri = self.transport.uri(&format!(
-			"/containers/{}/attach?stream=1&stdin=1&stdout=1&stderr=1",
-			id
-		))?;
+			let mut req = Request::new(Method::Post, uri);
 
-		let mut req = Request::new(Method::Post, uri);
+			req.set_version(HttpVersion::Http10);
+			req.set_body(body);
 
-		req.set_version(HttpVersion::Http10);
-		req.set_body(body);
+			self.transport.request(req)
+		});
 
-		let work = self.transport.request(req).and_then(cb);
-
-		self.core.run(work)
+		Box::new(work)
 	}
 
-	pub fn info(&mut self) -> Result<Value, hyper::Error> {
+	pub fn info(&self) -> DockerResponse<serde_json::Value> {
 		let uri = self.transport.uri("/info").unwrap();
-		let work = self.transport.get(uri).and_then(|res| {
+
+		Box::new(self.transport.get(uri).and_then(|res| {
 			res.body().concat2().and_then(move |body| {
 				let v = serde_json::from_slice(&body).unwrap();
 
 				Ok(v)
 			})
-		});
-
-		self.core.run(work)
+		}))
 	}
 
-	pub fn inspect(&mut self, id: &str) -> Result<Value, hyper::Error> {
+	pub fn inspect(&self, id: &str) -> DockerResponse<serde_json::Value> {
 		let uri = self.transport
 			.uri(&format!("/containers/{}/json", id))
 			.unwrap();
 
-		let work = self.transport.get(uri).and_then(|res| {
+		Box::new(self.transport.get(uri).and_then(|res| {
 			res.body().concat2().and_then(move |body| {
 				let v = serde_json::from_slice(&body).unwrap();
 
 				Ok(v)
 			})
-		});
-
-		self.core.run(work)
+		}))
 	}
 
 	// TODO: Create unit types for Height / Width to make this less error prone
 	pub fn resize(
-		&mut self,
+		&self,
 		id: &str,
 		width: usize,
 		height: usize,
-	) -> Result<(), hyper::Error> {
-		let uri = self.transport.uri(&format!(
-			"/containers/{}/resize?w={}&h={}",
-			id, width, height,
-		))?;
+	) -> DockerResponse<()> {
+		let uri = self.transport
+			.uri(&format!(
+				"/containers/{}/resize?w={}&h={}",
+				id, width, height,
+			))
+			.unwrap();
 
 		let req = Request::new(Method::Post, uri);
-		let work = self.transport.request(req).and_then(|_| Ok(()));
 
-		self.core.run(work)
+		Box::new(self.transport.request(req).and_then(|_| Ok(())))
 	}
 }

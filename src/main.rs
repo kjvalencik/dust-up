@@ -14,7 +14,7 @@ use std::io::{self, Write};
 
 use clap::{App, Arg, SubCommand};
 
-use futures::Stream;
+use futures::{Future, Stream};
 
 use tokio_core::reactor::Core;
 
@@ -55,10 +55,7 @@ mod terminal {
 			let stdin = io::stdin();
 			let fd = stdin.as_raw_fd();
 			let mut ios = Termios::from_fd(fd).expect("valid stdin handle");
-			let prev_ios = PrevTerminal {
-				fd,
-				prev_ios: ios
-			};
+			let prev_ios = PrevTerminal { fd, prev_ios: ios };
 
 			cfmakeraw(&mut ios);
 			tcsetattr(fd, termios::TCSADRAIN, &ios).expect("set attr on ios");
@@ -92,10 +89,12 @@ fn main() {
 		.get_matches();
 
 	let mut core = Core::new().unwrap();
+	let docker = Docker::new(&core);
 
 	if matches.subcommand_matches("info").is_some() {
-		Docker::new(&mut core)
-			.info()
+		let work = docker.info();
+
+		core.run(work)
 			.map(|v| println!("{}", v))
 			.expect("Failed to connect to docker");
 	} else if let Some(matches) = matches.subcommand_matches("inspect") {
@@ -103,8 +102,9 @@ fn main() {
 			.value_of("CONTAINER")
 			.expect("CONTAINER is required.");
 
-		Docker::new(&mut core)
-			.inspect(container_id)
+		let work = docker.inspect(container_id);
+
+		core.run(work)
 			.map(|v| println!("{}", v))
 			.expect("Failed to connect to docker");
 	} else if let Some(matches) = matches.subcommand_matches("attach") {
@@ -117,15 +117,11 @@ fn main() {
 		let _term = RawTerminal::new();
 		let body = tokio_stdin::stdin_body(&core);
 
-		Docker::new(&mut core)
-			.attach(container_id, body, |res| {
-				let (width, height) = term_size::dimensions().unwrap();
+		let work = docker.attach(container_id, body).and_then(|res| {
+			let (width, height) = term_size::dimensions().unwrap();
+			let work = docker.resize(container_id, width, height);
 
-				// FIXME: Make docker own `core` so it can be reused
-				Docker::new(&mut Core::new().unwrap())
-					.resize(container_id, width, height)
-					.unwrap();
-
+			work.and_then(|_| {
 				res.body().for_each(|chunk| {
 					let mut stdout = io::stdout();
 
@@ -136,6 +132,8 @@ fn main() {
 						.map_err(From::from)
 				})
 			})
-			.expect("not to fail");
+		});
+
+		core.run(work).expect("not to fail");
 	}
 }

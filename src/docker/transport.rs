@@ -88,8 +88,6 @@ impl Transport {
 	}
 
 	pub fn new_tls(core: &Core, host: &str, certs: &str) -> Transport {
-		let handle = core.handle();
-
 		let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
 
 		builder
@@ -108,7 +106,7 @@ impl Transport {
 
 		builder.set_ca_file(format!("{}/ca.pem", certs)).unwrap();
 
-		let mut http = HttpConnector::new(4, &handle);
+		let mut http = HttpConnector::new(4, &core.handle());
 
 		http.enforce_http(false);
 
