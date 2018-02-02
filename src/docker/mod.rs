@@ -139,22 +139,22 @@ impl Docker {
 		id: &'a str,
 		body: Body,
 	) -> Box<Future<Item = Response, Error = hyper::Error> + 'a> {
-		let work = self.ensure_running(id).and_then(move |_| {
-			// TODO: Take query params as arguments
-			let uri = self.transport
-				.uri(&path_format!(
-					"/containers/{}/attach?stream=1&stdin=1&stdout=1&stderr=1",
-					id
-				))
-				.unwrap();
+		// TODO: Take query params as arguments
+		let uri = self.transport
+			.uri(&path_format!(
+				"/containers/{}/attach?stream=1&stdin=1&stdout=1&stderr=1",
+				id
+			))
+			.unwrap();
 
-			let mut req = Request::new(Method::Post, uri);
+		let mut req = Request::new(Method::Post, uri);
 
-			req.set_version(HttpVersion::Http10);
-			req.set_body(body);
+		// HACK: Horrible hack to force hyper into `eof` encoding mode
+		req.set_version(HttpVersion::Http10);
+		req.set_body(body);
 
-			self.transport.request(req)
-		});
+		let attach = self.transport.request(req);
+		let work = self.ensure_running(id).and_then(|_| attach);
 
 		Box::new(work)
 	}
