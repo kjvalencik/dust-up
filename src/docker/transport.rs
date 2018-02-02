@@ -1,4 +1,4 @@
-use hyper::{Client, Uri};
+use hyper::{Client, Request, Uri};
 use hyper::client::{FutureResponse, HttpConnector};
 use hyper::error::UriError;
 
@@ -55,6 +55,14 @@ impl Transport {
 			Transport::Tcp(ref t) => t.client.get(uri),
 			Transport::Tls(ref t) => t.client.get(uri),
 			Transport::Unix(ref t) => t.client.get(uri),
+		}
+	}
+
+	pub fn request(&self, req: Request) -> FutureResponse {
+		match *self {
+			Transport::Tcp(ref t) => t.client.request(req),
+			Transport::Tls(ref t) => t.client.request(req),
+			Transport::Unix(ref t) => t.client.request(req),
 		}
 	}
 
