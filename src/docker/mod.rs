@@ -48,7 +48,7 @@ pub mod tokio_stdin {
 
 			// Push a couple of empty bytes onto the stream that will be
 			// dropped by body encoder
-			let bytes = b"\n\n"
+			let bytes = b"\0\0"
 				.into_iter()
 				.map(|byte| Ok(*byte))
 				.chain(stdin_lock.bytes());
