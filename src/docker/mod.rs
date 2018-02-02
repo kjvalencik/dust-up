@@ -80,6 +80,18 @@ pub mod tokio_stdin {
 	}
 }
 
+// TODO: Move this outside
+macro_rules! path_format {
+	($fmt: expr $(, $arg: expr)+,) => (path_format!($fmt $(, $arg)+));
+	($fmt: expr $(, $arg: expr)+) => (format!(
+		$fmt
+		$(, ::url::percent_encoding::percent_encode(
+			$arg.as_bytes(),
+			::url::percent_encoding::DEFAULT_ENCODE_SET,
+		))+
+	))
+}
+
 impl Docker {
 	fn ensure_running(&self, id: &str) -> DockerResponse<()> {
 		let work = self.inspect(id).and_then(|res_value| {
@@ -130,7 +142,7 @@ impl Docker {
 		let work = self.ensure_running(id).and_then(move |_| {
 			// TODO: Take query params as arguments
 			let uri = self.transport
-				.uri(&format!(
+				.uri(&path_format!(
 					"/containers/{}/attach?stream=1&stdin=1&stdout=1&stderr=1",
 					id
 				))
@@ -161,7 +173,7 @@ impl Docker {
 
 	pub fn inspect(&self, id: &str) -> DockerResponse<serde_json::Value> {
 		let uri = self.transport
-			.uri(&format!("/containers/{}/json", id))
+			.uri(&path_format!("/containers/{}/json", id))
 			.unwrap();
 
 		Box::new(self.transport.get(uri).and_then(|res| {
@@ -182,8 +194,10 @@ impl Docker {
 	) -> DockerResponse<()> {
 		let uri = self.transport
 			.uri(&format!(
-				"/containers/{}/resize?w={}&h={}",
-				id, width, height,
+				"{}?w={}&h={}",
+				path_format!("/containers/{}/resize", id),
+				width,
+				height,
 			))
 			.unwrap();
 

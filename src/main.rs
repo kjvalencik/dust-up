@@ -9,6 +9,7 @@ extern crate serde_yaml;
 extern crate term_size;
 extern crate termios;
 extern crate tokio_core;
+extern crate url;
 
 use std::io::{self, Write};
 
