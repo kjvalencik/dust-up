@@ -77,7 +77,7 @@ impl Docker {
 		req.set_body(body);
 
 		let attach = self.transport.request(req);
-		let work = self.ensure_running(id).then(|_| attach);
+		let work = self.ensure_running(id).and_then(|_| attach);
 
 		Box::new(work)
 	}

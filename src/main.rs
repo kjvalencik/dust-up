@@ -79,7 +79,8 @@ fn run_async(cmd: Command, docker: Docker) -> Result<()> {
 					.map_err(From::from)
 			});
 
-			await!(body_work.join(work))?;
+			await!(body_work.select(work))
+				.map_err(|_| "fix me")?;
 		}
 	};
 
