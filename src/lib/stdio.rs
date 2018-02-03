@@ -8,8 +8,6 @@ use futures::stream::iter_result;
 use futures::{Future, Sink, Stream};
 use futures::sync::mpsc::{self, SendError, UnboundedReceiver};
 
-use tokio_core::reactor::Core;
-
 #[derive(Debug)]
 enum Error {
 	Stdin(std::io::Error),
@@ -41,15 +39,13 @@ pub fn stdin_stream() -> UnboundedReceiver<u8> {
 	channel_stream
 }
 
-pub fn stdin_body(core: &Core) -> Body {
+pub fn stdin_body() -> (Body, Box<Future<Item = (), Error = hyper::Error>>) {
 	let stdin = stdin_stream()
 		.map(|byte| Ok(Chunk::from(vec![byte])))
 		.map_err(|_| unreachable!());
 
 	let (tx, body) = hyper::Body::pair();
+	let work = tx.send_all(stdin).map(|_| ()).map_err(|_| unreachable!());
 
-	core.handle()
-		.spawn(tx.send_all(stdin).map(|_| ()).map_err(|_| ()));
-
-	body
+	(body, Box::new(work))
 }
