@@ -9,10 +9,11 @@ use serde_json::{self, Value};
 use tokio_core::reactor::Core;
 
 use self::transport::Transport;
+use super::errors::Error;
 
 mod transport;
 
-type DockerResponse<T> = Box<Future<Item = T, Error = hyper::Error>>;
+type DockerResponse<T> = Box<Future<Item = T, Error = Error>>;
 
 // TODO: Consider `impl trait` instead of boxes
 pub struct Docker {
@@ -38,7 +39,7 @@ impl Docker {
 				}
 			}
 
-			Err(hyper::Error::Status)
+			Err(hyper::Error::Status.into())
 		});
 
 		Box::new(work)
@@ -76,22 +77,27 @@ impl Docker {
 		req.set_version(HttpVersion::Http10);
 		req.set_body(body);
 
-		let attach = self.transport.request(req);
-		let work = self.ensure_running(id).and_then(|_| attach);
+		let attach = self.transport.request(req).map_err(|err| err.into());
+		let work = self.ensure_running(id)
+			.and_then(|_| attach)
+			.map_err(|err| err.into());
 
 		Box::new(work)
 	}
 
 	pub fn info(&self) -> DockerResponse<serde_json::Value> {
 		let uri = self.transport.uri("/info").unwrap();
+		let work = self.transport.get(uri)
+			.and_then(|res| {
+				res.body().concat2().and_then(move |body| {
+					let v = serde_json::from_slice(&body).unwrap();
 
-		Box::new(self.transport.get(uri).and_then(|res| {
-			res.body().concat2().and_then(move |body| {
-				let v = serde_json::from_slice(&body).unwrap();
-
-				Ok(v)
+					Ok(v)
+				})
 			})
-		}))
+			.map_err(|err| err.into());
+
+		Box::new(work)
 	}
 
 	pub fn inspect(&self, id: &str) -> DockerResponse<serde_json::Value> {
@@ -99,13 +105,17 @@ impl Docker {
 			.uri(&path_format!("/containers/{}/json", id))
 			.unwrap();
 
-		Box::new(self.transport.get(uri).and_then(|res| {
-			res.body().concat2().and_then(move |body| {
-				let v = serde_json::from_slice(&body).unwrap();
+		let work = self.transport.get(uri)
+			.and_then(|res| {
+				res.body().concat2().and_then(move |body| {
+					let v = serde_json::from_slice(&body).unwrap();
 
-				Ok(v)
+					Ok(v)
+				})
 			})
-		}))
+			.map_err(|err| err.into());
+
+		Box::new(work)
 	}
 
 	// TODO: Create unit types for Height / Width to make this less error prone
@@ -125,7 +135,10 @@ impl Docker {
 			.unwrap();
 
 		let req = Request::new(Method::Post, uri);
+		let work = self.transport.request(req)
+			.and_then(|_| Ok(()))
+			.map_err(|err| err.into());
 
-		Box::new(self.transport.request(req).and_then(|_| Ok(())))
+		Box::new(work)
 	}
 }
