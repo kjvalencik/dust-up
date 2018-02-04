@@ -33,7 +33,7 @@ pub fn stdin_stream() -> UnboundedReceiver<u8> {
 			.map_err(Error::Stdin)
 			.forward(stdin_sink)
 			.wait()
-			.unwrap();
+			.expect("Stdin stream failed");
 	});
 
 	channel_stream

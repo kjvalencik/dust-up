@@ -53,7 +53,7 @@ impl Docker {
 		Box::new(work)
 	}
 
-	pub fn new(core: &Core) -> Docker {
+	pub fn new(core: &Core) -> Result<Docker> {
 		let host = env::var("DOCKER_HOST")
 			.unwrap_or_else(|_| "unix:///var/run/docker.sock".into());
 
@@ -63,9 +63,9 @@ impl Docker {
 			Transport::new_tls(core, &host, certs)
 		} else {
 			Transport::new_tcp(core, &host)
-		};
+		}?;
 
-		Docker { transport }
+		Ok(Docker { transport })
 	}
 
 	// TODO: Inspect container state before attempting to attach
@@ -91,11 +91,9 @@ impl Docker {
 			req.set_version(HttpVersion::Http10);
 			req.set_body(body);
 
-			let attach = self.transport.request(req).map_err(|err| err.into());
+			let attach = self.transport.request(req).map_err(Error::from);
 
-			self.ensure_running(id)
-				.and_then(|_| attach)
-				.map_err(|err| err.into())
+			self.ensure_running(id).and_then(|_| attach)
 		});
 
 		Box::new(work)
@@ -110,12 +108,12 @@ impl Docker {
 		}).and_then(move |uri| {
 			self.transport
 				.get(uri)
-				.map_err(|err| Error::from(err))
+				.map_err(Error::from)
 				.and_then(|res| {
-					res.body().concat2().map_err(|err| err.into()).and_then(
+					res.body().concat2().map_err(Error::from).and_then(
 						move |body| {
 							future::result(serde_json::from_slice(&body))
-								.map_err(|err| Error::from(err))
+								.map_err(Error::from)
 						},
 					)
 				})
@@ -133,12 +131,12 @@ impl Docker {
 		}).and_then(move |uri| {
 			self.transport
 				.get(uri)
-				.map_err(|err| Error::from(err))
+				.map_err(Error::from)
 				.and_then(|res| {
-					res.body().concat2().map_err(|err| err.into()).and_then(
+					res.body().concat2().map_err(Error::from).and_then(
 						move |body| {
 							future::result(serde_json::from_slice(&body))
-								.map_err(|err| Error::from(err))
+								.map_err(Error::from)
 						},
 					)
 				})
@@ -169,7 +167,7 @@ impl Docker {
 			self.transport
 				.request(req)
 				.and_then(|_| Ok(()))
-				.map_err(|err| err.into())
+				.map_err(Error::from)
 		});
 
 		Box::new(work)

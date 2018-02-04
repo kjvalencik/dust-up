@@ -1,6 +1,5 @@
 use hyper::{Client, Request, Uri};
 use hyper::client::{FutureResponse, HttpConnector};
-use hyper::error::UriError;
 
 use hyper_openssl::HttpsConnector;
 
@@ -9,6 +8,8 @@ use hyperlocal::{self, UnixConnector};
 use openssl::ssl::{SslConnector, SslFiletype, SslMethod};
 
 use tokio_core::reactor::Core;
+
+use super::super::errors::Result;
 
 pub struct Tcp {
 	host: String,
@@ -66,45 +67,43 @@ impl Transport {
 		}
 	}
 
-	pub fn uri(&self, path: &str) -> Result<Uri, UriError> {
-		match *self {
+	pub fn uri(&self, path: &str) -> Result<Uri> {
+		let uri = match *self {
 			Transport::Tcp(ref t) => format!("{}{}", &t.host, path).parse(),
 			Transport::Tls(ref t) => format!("{}{}", &t.host, path).parse(),
 			Transport::Unix(ref t) => {
 				Ok(hyperlocal::Uri::new(&t.file, path).into())
 			}
-		}
+		};
+
+		Ok(uri?)
 	}
 
-	pub fn new_unix(core: &Core, host: &str) -> Transport {
+	pub fn new_unix(core: &Core, host: &str) -> Result<Transport> {
 		let client = Client::configure()
 			.connector(UnixConnector::new(core.handle()))
 			.build(&core.handle());
 
-		(Unix {
+		Ok(Unix {
 			client,
 			file: host.chars().skip(7).collect(),
-		}).into()
+		}.into())
 	}
 
-	pub fn new_tls(core: &Core, host: &str, certs: &str) -> Transport {
-		let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
+	pub fn new_tls(core: &Core, host: &str, certs: &str) -> Result<Transport> {
+		let mut builder = SslConnector::builder(SslMethod::tls())?;
 
-		builder
-			.set_certificate_file(
-				format!("{}/cert.pem", certs),
-				SslFiletype::PEM,
-			)
-			.unwrap();
+		builder.set_certificate_file(
+			format!("{}/cert.pem", certs),
+			SslFiletype::PEM,
+		)?;
 
-		builder
-			.set_private_key_file(
-				format!("{}/key.pem", certs),
-				SslFiletype::PEM,
-			)
-			.unwrap();
+		builder.set_private_key_file(
+			format!("{}/key.pem", certs),
+			SslFiletype::PEM,
+		)?;
 
-		builder.set_ca_file(format!("{}/ca.pem", certs)).unwrap();
+		builder.set_ca_file(format!("{}/ca.pem", certs))?;
 
 		let mut http = HttpConnector::new(4, &core.handle());
 
@@ -116,18 +115,18 @@ impl Transport {
 			.connector(connector)
 			.build(&core.handle());
 
-		(Tls {
+		Ok(Tls {
 			client,
 			host: host.into(),
-		}).into()
+		}.into())
 	}
 
-	pub fn new_tcp(core: &Core, host: &str) -> Transport {
+	pub fn new_tcp(core: &Core, host: &str) -> Result<Transport> {
 		let client = Client::new(&core.handle());
 
-		(Tcp {
+		Ok(Tcp {
 			client,
 			host: host.into(),
-		}).into()
+		}.into())
 	}
 }

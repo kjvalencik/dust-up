@@ -3,6 +3,7 @@ error_chain! {
 		Hyper(::hyper::Error);
 		Io(::std::io::Error);
 		Json(::serde_json::Error);
+		OpenSsl(::openssl::error::ErrorStack);
 		Uri(::hyper::error::UriError);
 	}
 }

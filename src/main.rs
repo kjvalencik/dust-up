@@ -44,27 +44,38 @@ enum Command {
 	Attach(String),
 }
 
-fn run_async(core: &mut Core, cmd: Command, docker: Docker) -> Result<()> {
+fn run_async(core: &mut Core, cmd: Command, docker: &Docker) -> Result<()> {
 	match cmd {
 		Command::Info => {
 			let work = docker.info();
 
-			core.run(work).and_then(|v| Ok(println!("{}", v)))
+			core.run(work).and_then(|v| {
+				println!("{}", v);
+
+				Ok(())
+			})
 		}
 		Command::Inspect(id) => {
 			let work = docker.inspect(&id);
 
-			core.run(work).and_then(|v| Ok(println!("{}", v)))
+			core.run(work).and_then(|v| {
+				println!("{}", v);
+
+				Ok(())
+			})
 		}
 		Command::Attach(id) => {
 			let _term = RawTerminal::new();
 			let (body, body_work) = stdin_body();
-			let work = docker.attach(&id, body)
+			let work = docker
+				.attach(&id, body)
 				.and_then(|res| {
-					let (width, height) = term_size::dimensions().unwrap();
-
-					docker.resize(&id, width, height)
-						.and_then(|_| Ok(res))
+					term_size::dimensions()
+						.chain_err(|| "Could not get terminal dimensions")
+						.map(|(width, height)| {
+							docker.resize(&id, width, height)
+						})
+						.map(|_| res)
 				})
 				.and_then(|res| {
 					let work = res.body().for_each(|chunk| {
@@ -77,9 +88,10 @@ fn run_async(core: &mut Core, cmd: Command, docker: Docker) -> Result<()> {
 							.map_err(From::from)
 					});
 
-					body_work.select(work)
+					body_work
+						.select(work)
 						.map(|_| ())
-						.map_err(|_| "fix me".into())
+						.map_err(|_| "fixme".into())
 				});
 
 			core.run(work)
@@ -127,9 +139,9 @@ fn run() -> Result<()> {
 	};
 
 	let mut core = Core::new()?;
-	let docker = Docker::new(&core);
+	let docker = Docker::new(&core)?;
 
-	run_async(&mut core, cmd, docker)
+	run_async(&mut core, cmd, &docker)
 }
 
 quick_main!(run);
