@@ -45,6 +45,8 @@ pub fn stdin_body() -> (Body, Box<Future<Item = (), Error = hyper::Error>>) {
 		.map_err(|_| unreachable!());
 
 	let (tx, body) = hyper::Body::pair();
+
+	// FIXME: Error is not actually unreachable
 	let work = tx.send_all(stdin).map(|_| ()).map_err(|_| unreachable!());
 
 	(body, Box::new(work))

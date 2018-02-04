@@ -7,7 +7,7 @@ authors = ["Ken Valencik <kvalencik@underarmour.com>"]
 [dependencies]
 clap = "2"
 error-chain = "0.11"
-futures-await = "0.1"
+futures = "0.1"
 hyper = "0.11"
 hyperlocal = "0.4"
 hyper-openssl = "0.4"

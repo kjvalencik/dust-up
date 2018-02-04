@@ -1,11 +1,9 @@
-#![feature(proc_macro, conservative_impl_trait, generators)]
-
 extern crate clap;
 
 #[macro_use]
 extern crate error_chain;
 
-extern crate futures_await as futures;
+extern crate futures;
 extern crate hyper;
 extern crate hyper_openssl;
 extern crate hyperlocal;
@@ -22,7 +20,6 @@ use std::io::{self, Write};
 use clap::{App, Arg, SubCommand};
 
 use futures::{Future, Stream};
-use futures::prelude::{async, await};
 
 use tokio_core::reactor::Core;
 
@@ -47,44 +44,47 @@ enum Command {
 	Attach(String),
 }
 
-#[async]
-fn run_async(cmd: Command, docker: Docker) -> Result<()> {
+fn run_async(core: &mut Core, cmd: Command, docker: Docker) -> Result<()> {
 	match cmd {
 		Command::Info => {
-			let v = await!(docker.info())?;
+			let work = docker.info();
 
-			println!("{}", v);
+			core.run(work).and_then(|v| Ok(println!("{}", v)))
 		}
 		Command::Inspect(id) => {
-			let v = await!(docker.inspect(&id))?;
+			let work = docker.inspect(&id);
 
-			println!("{}", v);
+			core.run(work).and_then(|v| Ok(println!("{}", v)))
 		}
 		Command::Attach(id) => {
 			let _term = RawTerminal::new();
 			let (body, body_work) = stdin_body();
+			let work = docker.attach(&id, body)
+				.and_then(|res| {
+					let (width, height) = term_size::dimensions().unwrap();
 
-			let res = await!(docker.attach(&id, body))?;
-			let (width, height) = term_size::dimensions().unwrap();
+					docker.resize(&id, width, height)
+						.and_then(|_| Ok(res))
+				})
+				.and_then(|res| {
+					let work = res.body().for_each(|chunk| {
+						let mut stdout = io::stdout();
 
-			await!(docker.resize(&id, width, height))?;
+						stdout
+							.write_all(&chunk)
+							.map(|_| stdout.flush())
+							.map(|_| ())
+							.map_err(From::from)
+					});
 
-			let work = res.body().for_each(|chunk| {
-				let mut stdout = io::stdout();
+					body_work.select(work)
+						.map(|_| ())
+						.map_err(|_| "fix me".into())
+				});
 
-				stdout
-					.write_all(&chunk)
-					.map(|_| stdout.flush())
-					.map(|_| ())
-					.map_err(From::from)
-			});
-
-			await!(body_work.select(work))
-				.map_err(|_| "fix me")?;
+			core.run(work)
 		}
-	};
-
-	Ok(())
+	}
 }
 
 fn run() -> Result<()> {
@@ -129,7 +129,7 @@ fn run() -> Result<()> {
 	let mut core = Core::new()?;
 	let docker = Docker::new(&core);
 
-	core.run(run_async(cmd, docker))
+	run_async(&mut core, cmd, docker)
 }
 
 quick_main!(run);

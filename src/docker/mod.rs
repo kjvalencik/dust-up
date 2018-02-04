@@ -1,6 +1,7 @@
 use std::env;
 
 use futures::{Future, Stream};
+use futures::future::{self, FutureResult};
 
 use hyper::{self, Body, HttpVersion, Method, Request, Response};
 
@@ -9,13 +10,20 @@ use serde_json::{self, Value};
 use tokio_core::reactor::Core;
 
 use self::transport::Transport;
-use super::errors::Error;
+use super::errors::{Error, Result};
 
 mod transport;
 
-type DockerResponse<T> = Box<Future<Item = T, Error = Error>>;
-
 // TODO: Consider `impl trait` instead of boxes
+type DockerResponse<'a, T> = Box<Future<Item = T, Error = Error> + 'a>;
+
+fn future_try<F, T>(f: F) -> FutureResult<T, Error>
+where
+	F: Fn() -> Result<T>,
+{
+	future::result(f())
+}
+
 pub struct Docker {
 	transport: Transport,
 }
@@ -62,82 +70,107 @@ impl Docker {
 
 	// TODO: Inspect container state before attempting to attach
 	// TODO: Listen for SIGWINCH with `chan_signal`
-	pub fn attach(&self, id: &str, body: Body) -> DockerResponse<Response> {
+	pub fn attach<'a>(
+		&'a self,
+		id: &'a str,
+		body: Body,
+	) -> DockerResponse<Response> {
 		// TODO: Take query params as arguments
-		let uri = self.transport
-			.uri(&path_format!(
+
+		let work = future_try(|| {
+			let uri = self.transport.uri(&path_format!(
 				"/containers/{}/attach?stream=1&stdin=1&stdout=1&stderr=1",
 				id
-			))
-			.unwrap();
+			))?;
 
-		let mut req = Request::new(Method::Post, uri);
+			Ok(uri)
+		}).and_then(move |uri| {
+			let mut req = Request::new(Method::Post, uri);
 
-		// HACK: Horrible hack to force hyper into `eof` encoding mode
-		req.set_version(HttpVersion::Http10);
-		req.set_body(body);
+			// HACK: Horrible hack to force hyper into `eof` encoding mode
+			req.set_version(HttpVersion::Http10);
+			req.set_body(body);
 
-		let attach = self.transport.request(req).map_err(|err| err.into());
-		let work = self.ensure_running(id)
-			.and_then(|_| attach)
-			.map_err(|err| err.into());
+			let attach = self.transport.request(req).map_err(|err| err.into());
+
+			self.ensure_running(id)
+				.and_then(|_| attach)
+				.map_err(|err| err.into())
+		});
 
 		Box::new(work)
 	}
 
 	pub fn info(&self) -> DockerResponse<serde_json::Value> {
-		let uri = self.transport.uri("/info").unwrap();
-		let work = self.transport.get(uri)
-			.and_then(|res| {
-				res.body().concat2().and_then(move |body| {
-					let v = serde_json::from_slice(&body).unwrap();
+		// TODO: This code is repeated, make a method for it
+		let work = future_try(|| {
+			let uri = self.transport.uri("/info")?;
 
-					Ok(v)
+			Ok(uri)
+		}).and_then(move |uri| {
+			self.transport
+				.get(uri)
+				.map_err(|err| Error::from(err))
+				.and_then(|res| {
+					res.body().concat2().map_err(|err| err.into()).and_then(
+						move |body| {
+							future::result(serde_json::from_slice(&body))
+								.map_err(|err| Error::from(err))
+						},
+					)
 				})
-			})
-			.map_err(|err| err.into());
+		});
 
 		Box::new(work)
 	}
 
 	pub fn inspect(&self, id: &str) -> DockerResponse<serde_json::Value> {
-		let uri = self.transport
-			.uri(&path_format!("/containers/{}/json", id))
-			.unwrap();
+		let work = future_try(|| {
+			let uri = self.transport
+				.uri(&path_format!("/containers/{}/json", id))?;
 
-		let work = self.transport.get(uri)
-			.and_then(|res| {
-				res.body().concat2().and_then(move |body| {
-					let v = serde_json::from_slice(&body).unwrap();
-
-					Ok(v)
+			Ok(uri)
+		}).and_then(move |uri| {
+			self.transport
+				.get(uri)
+				.map_err(|err| Error::from(err))
+				.and_then(|res| {
+					res.body().concat2().map_err(|err| err.into()).and_then(
+						move |body| {
+							future::result(serde_json::from_slice(&body))
+								.map_err(|err| Error::from(err))
+						},
+					)
 				})
-			})
-			.map_err(|err| err.into());
+		});
 
 		Box::new(work)
 	}
 
 	// TODO: Create unit types for Height / Width to make this less error prone
-	pub fn resize(
-		&self,
-		id: &str,
+	pub fn resize<'a>(
+		&'a self,
+		id: &'a str,
 		width: usize,
 		height: usize,
 	) -> DockerResponse<()> {
-		let uri = self.transport
-			.uri(&format!(
+		let work = future_try(|| {
+			let uri = self.transport.uri(&format!(
 				"{}?w={}&h={}",
 				path_format!("/containers/{}/resize", id),
 				width,
 				height,
-			))
-			.unwrap();
+			))?;
 
-		let req = Request::new(Method::Post, uri);
-		let work = self.transport.request(req)
-			.and_then(|_| Ok(()))
-			.map_err(|err| err.into());
+			Ok(uri)
+		}).and_then(move |uri| {
+			let req = Request::new(Method::Post, uri);
+
+			self.transport
+				.request(req)
+				.and_then(|_| Ok(()))
+				.map_err(|err| err.into())
+		});
 
 		Box::new(work)
 	}
