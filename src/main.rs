@@ -64,19 +64,21 @@ fn run_async(core: &mut Core, cmd: Command, docker: &Docker) -> Result<()> {
 				Ok(())
 			})
 		}
-		Command::Attach(id) => {
+		Command::Attach(id_owned) => {
+			let id = &id_owned;
 			let _term = RawTerminal::new();
 			let (body, body_work) = stdin_body();
 			let work = docker
-				.attach(&id, body)
+				.attach(id, body)
 				.and_then(|res| {
 					term_size::dimensions()
 						.chain_err(|| "Could not get terminal dimensions")
 						.map(|(width, height)| {
-							docker.resize(&id, width, height)
+							docker.resize(id, width, height)
+								.and_then(|_| Ok(res))
 						})
-						.map(|_| res)
 				})
+				.flatten()
 				.and_then(|res| {
 					let work =
 						res.body().map_err(Error::from).for_each(|chunk| {
