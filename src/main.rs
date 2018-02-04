@@ -24,7 +24,7 @@ use futures::{Future, Stream};
 use tokio_core::reactor::Core;
 
 use self::docker::Docker;
-use self::errors::{Result, ResultExt};
+use self::errors::{Error, Result, ResultExt};
 use self::lib::stdio::stdin_body;
 use self::lib::terminal::RawTerminal;
 
@@ -78,20 +78,22 @@ fn run_async(core: &mut Core, cmd: Command, docker: &Docker) -> Result<()> {
 						.map(|_| res)
 				})
 				.and_then(|res| {
-					let work = res.body().for_each(|chunk| {
-						let mut stdout = io::stdout();
+					let work =
+						res.body().map_err(Error::from).for_each(|chunk| {
+							let mut stdout = io::stdout();
 
-						stdout
-							.write_all(&chunk)
-							.map(|_| stdout.flush())
-							.map(|_| ())
-							.map_err(From::from)
-					});
+							stdout
+								.write_all(&chunk)
+								.map(|_| stdout.flush())
+								.map(|_| ())
+								.map_err(Error::from)
+						});
 
 					body_work
+						.map_err(Error::from)
 						.select(work)
 						.map(|_| ())
-						.map_err(|_| "fixme".into())
+						.map_err(|(err, _)| err)
 				});
 
 			core.run(work)

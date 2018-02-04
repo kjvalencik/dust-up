@@ -1,4 +1,3 @@
-use std;
 use std::io::{self, Read};
 use std::thread;
 
@@ -6,17 +5,13 @@ use hyper::{self, Body, Chunk};
 
 use futures::stream::iter_result;
 use futures::{Future, Sink, Stream};
-use futures::sync::mpsc::{self, SendError, UnboundedReceiver};
+use futures::sync::mpsc::{self, UnboundedReceiver};
 
-#[derive(Debug)]
-enum Error {
-	Stdin(std::io::Error),
-	Channel(SendError<u8>),
-}
+use super::super::errors::Error;
 
 pub fn stdin_stream() -> UnboundedReceiver<u8> {
 	let (channel_sink, channel_stream) = mpsc::unbounded();
-	let stdin_sink = channel_sink.sink_map_err(Error::Channel);
+	let stdin_sink = channel_sink.sink_map_err(Error::from);
 
 	thread::spawn(move || {
 		let stdin = io::stdin();
@@ -30,7 +25,7 @@ pub fn stdin_stream() -> UnboundedReceiver<u8> {
 			.chain(stdin_lock.bytes());
 
 		iter_result(bytes)
-			.map_err(Error::Stdin)
+			.map_err(Error::from)
 			.forward(stdin_sink)
 			.wait()
 			.expect("Stdin stream failed");
@@ -39,15 +34,14 @@ pub fn stdin_stream() -> UnboundedReceiver<u8> {
 	channel_stream
 }
 
-pub fn stdin_body() -> (Body, Box<Future<Item = (), Error = hyper::Error>>) {
+pub fn stdin_body() -> (Body, Box<Future<Item = (), Error = Error>>) {
 	let stdin = stdin_stream()
 		.map(|byte| Ok(Chunk::from(vec![byte])))
 		.map_err(|_| unreachable!());
 
 	let (tx, body) = hyper::Body::pair();
 
-	// FIXME: Error is not actually unreachable
-	let work = tx.send_all(stdin).map(|_| ()).map_err(|_| unreachable!());
+	let work = tx.send_all(stdin).map(|_| ()).map_err(Error::from);
 
 	(body, Box::new(work))
 }
