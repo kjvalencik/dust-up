@@ -20,7 +20,7 @@ use std::io::{self, Write};
 
 use clap::{App, Arg, SubCommand};
 
-use futures::{future, Future, Stream};
+use futures::{Future, Stream};
 
 use tokio_core::reactor::Core;
 
@@ -71,15 +71,11 @@ fn run_async(core: &mut Core, cmd: Command, docker: &Docker) -> Result<()> {
 
 			let (body, body_work) = stdin_body();
 			let sigwinch = sigwinch_stream(&core.handle())
-				.for_each(|_| {
-					let res = term_size::dimensions()
+				.and_then(|_| {
+					term_size::dimensions()
 						.chain_err(|| "Could not get terminal dimensions")
-						.map(|(width, height)| {
-							docker.resize(id, width, height)
-						});
-
-					future::result(res).flatten()
-				});
+				})
+				.for_each(|(width, height)| docker.resize(id, width, height));
 
 			let work = docker
 				.attach(id, body)
