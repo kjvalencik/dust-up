@@ -3,9 +3,15 @@ use std::thread;
 
 use hyper::{self, Body, Chunk};
 
-use futures::stream::iter_result;
+use futures::stream::{iter_result};
 use futures::{Future, Sink, Stream};
 use futures::sync::mpsc::{self, UnboundedReceiver};
+
+use tokio_core::reactor::Handle;
+
+use tokio_signal::unix::Signal;
+use tokio_signal::unix::libc::SIGWINCH;
+
 
 use super::super::errors::Error;
 
@@ -44,4 +50,12 @@ pub fn stdin_body() -> (Body, Box<Future<Item = (), Error = Error>>) {
 	let work = tx.send_all(stdin).map(|_| ()).map_err(Error::from);
 
 	(body, Box::new(work))
+}
+
+pub fn sigwinch_stream(handle: &Handle) -> Box<Stream<Item = i32, Error = Error>> {
+	let stream = Signal::new(SIGWINCH, handle)
+		.flatten_stream()
+		.map_err(Error::from);
+
+	Box::new(stream)
 }

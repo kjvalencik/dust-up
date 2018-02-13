@@ -13,19 +13,20 @@ extern crate serde_yaml;
 extern crate term_size;
 extern crate termios;
 extern crate tokio_core;
+extern crate tokio_signal;
 extern crate url;
 
 use std::io::{self, Write};
 
 use clap::{App, Arg, SubCommand};
 
-use futures::{Future, Stream};
+use futures::{future, Future, Stream};
 
 use tokio_core::reactor::Core;
 
 use self::docker::Docker;
 use self::errors::{Error, Result, ResultExt};
-use self::lib::stdio::stdin_body;
+use self::lib::stdio::{sigwinch_stream, stdin_body};
 use self::lib::terminal::RawTerminal;
 
 #[macro_use]
@@ -67,7 +68,19 @@ fn run_async(core: &mut Core, cmd: Command, docker: &Docker) -> Result<()> {
 		Command::Attach(id_owned) => {
 			let id = &id_owned;
 			let _term = RawTerminal::new();
+
 			let (body, body_work) = stdin_body();
+			let sigwinch = sigwinch_stream(&core.handle())
+				.for_each(|_| {
+					let res = term_size::dimensions()
+						.chain_err(|| "Could not get terminal dimensions")
+						.map(|(width, height)| {
+							docker.resize(id, width, height)
+						});
+
+					future::result(res).flatten()
+				});
+
 			let work = docker
 				.attach(id, body)
 				.and_then(|res| {
@@ -91,12 +104,14 @@ fn run_async(core: &mut Core, cmd: Command, docker: &Docker) -> Result<()> {
 								.map_err(Error::from)
 						});
 
-					body_work
-						.map_err(Error::from)
-						.select(work)
-						.map(|_| ())
-						.map_err(|(err, _)| err)
-				});
+					work
+				})
+				.select(body_work)
+				.map(|_| ())
+				.map_err(|(err, _)| err)
+				.select(sigwinch)
+				.map(|_| ())
+				.map_err(|(err, _)| err);
 
 			core.run(work)
 		}

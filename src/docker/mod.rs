@@ -68,8 +68,6 @@ impl Docker {
 		Ok(Docker { transport })
 	}
 
-	// TODO: Inspect container state before attempting to attach
-	// TODO: Listen for SIGWINCH with `chan_signal`
 	pub fn attach<'a>(
 		&'a self,
 		id: &'a str,
